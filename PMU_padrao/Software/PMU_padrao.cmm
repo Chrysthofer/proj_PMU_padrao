@@ -1,0 +1,229 @@
+#PRNAME PMU_padrao
+#NUBITS 32
+#NBMANT 23
+#NBEXPO 8
+#NDSTAC 64
+#SDEPTH 32
+#NUIOIN 2
+#NUIOOU 4
+#NUGAIN 128
+
+// ============================================================================
+//  PMU PADRAO  -  Standard M-class PMU phasor/frequency/ROCOF estimator
+//  Port of Matilab/PMU_padrao.m to the SAPHO processor (C+-).
+//
+//  Fixed operating point (from Matilab/main.m):
+//      Fs (sampling)  = 1920 Hz
+//      Fn (nominal)   = 60   Hz     -> Fn/Fs = 1/32  (exact 32-sample demod LUT)
+//      Fr (reporting) = 60   Hz     -> class-M filter: frep = 8.19, N = 164 taps
+//
+//  STREAMING / INTERACTIVE model (NOT a batch while over a stored vector):
+//  main() first builds the demod LUTs and the FIR coefficients ONCE, then enters
+//  an endless service loop.  Each pass consumes exactly ONE new sample x[n] from
+//  input port 0 (fin) and emits ONE set of results.  The single #TOAQUI marker
+//  sits inside that loop, so the hardware 'cheguei' pin pulses once per sample -
+//  i.e. "cada ciclo do #TOAQUI = cada amostra que entra no processador".
+//
+//  NEW-SAMPLE HANDSHAKE (input port 1):
+//  in()/fin() do NOT wait for data - they sample io_in on the spot.  An
+//  external wrapper (the ADC front-end on FPGA; the cocotb testbench in
+//  simulation) latches each new sample and raises a 1-bit flag on INPUT
+//  PORT 1 at every sample strobe; reading the sample on INPUT PORT 0
+//  clears the flag.  The program busy-waits on port 1 before consuming
+//  port 0, so each loop iteration processes exactly one fresh sample no
+//  matter how fast the processor clock is.
+//
+//  I/O SCALING (Q20 fixed point on the ports):
+//  SAPHO's fin() converts the io_in INTEGER to float (I2F, 23-bit signed) and
+//  fout() converts the float back to a truncated INTEGER (F2I) on io_out.
+//  So both sides carry integers scaled by 2^20 = 1048576:
+//      input  port 0 : x_int    = round(x * 2^20)      (|x|<=2 fits in 23 bits)
+//      output port 0 : round(Re{Xe} * 2^20)
+//      output port 1 : round(Im{Xe} * 2^20)
+//      output port 2 : round(fe    * 2^20)   estimated frequency (Hz)
+//      output port 3 : round(ROCOF * 2^20)   Hz per sample-step
+//  The cocotb testbench multiplies/divides by 2^20 on its side.
+// ============================================================================
+
+#define NFILT 164          // class-M FIR length
+#define HALF   82          // N/2  (sinc centre)
+
+// ------------------- persistent state (data memory) -------------------------
+float w0  [164];           // class-M FIR coefficients (built at startup)
+float cosd[32];            // demod cosine LUT: cos(2*pi*n/32)
+float sind[32];            // demod   sine LUT: sin(2*pi*n/32)
+float bufr[164];           // circular delay line - demodulated real part (yr)
+float bufi[164];           // circular delay line - demodulated imag part (yi)
+
+int   wr;                  // circular-buffer write pointer
+int   nsmp;                // running sample index (drives the demod phase)
+comp  yprev;               // previous phasor         (for the phase difference)
+float feprev;              // previous frequency est. (for the ROCOF difference)
+
+void main()
+{
+    // ---- scratch (declared up front; note: 'i' is reserved for 3.0+4.0i) ---
+    int   flagv;
+    int   ii;
+    int   k;
+    int   idx;
+    int   ph;
+    float ang;
+    float a;
+    float h;
+    float sumw;
+    float sc;
+    float fk;
+    float x;
+    float yr;
+    float yi;
+    float accr;
+    float acci;
+    float yi_out;
+    float dphi;
+    float fe;
+    float rocof;
+    comp  y;
+    comp  rot;
+
+    // ======================================================================
+    //  STARTUP  (executes once, before the first sample) -------------------
+    // ======================================================================
+
+    // (1) Demodulation LUTs.  Because Fn/Fs = 60/1920 = 1/32 exactly, the local
+    //     oscillator repeats every 32 samples, so cos/sin of 2*pi*n/32 tabulate
+    //     with no interpolation error.
+    ii  = 0;
+    ang = 0.0;
+    while (ii < 32)
+    {
+        cosd[ii] = cos(ang);
+        sind[ii] = sin(ang);
+        ang = ang + 0.1963495408;   // 2*pi/32
+        ii  = ii + 1;
+    }
+
+    // (2) Class-M filter coefficients (windowed sinc), matching filtro_classM.m
+    //     for Fn=60, Fr=60  (frep = 8.19, N = 164):
+    //         a    = 2*pi*(2*frep/Fs)*(k - N/2)
+    //         h    = 0.54 - 0.46*cos(2*pi*k/(N-1))          (Hamming window)
+    //         w[k] = (k==N/2) ? 1 : sinc(a)*h
+    //     then normalised so that sum(w) = sqrt(2)  (DC gain = sqrt(2); this is
+    //     what makes |Xe| land on A/sqrt(2), cancelling the 1/2 demod factor).
+    sumw = 0.0;
+    fk   = 0.0;
+    ii   = 0;
+    while (ii < NFILT)
+    {
+        if (ii == HALF)
+        {
+            w0[ii] = 1.0;
+        }
+        else
+        {
+            a      = 0.0536034247 * (fk - 82.0);              // 2*pi*(2*8.19/1920)
+            h      = 0.54 - 0.46 * cos(0.0385471491 * fk);    // 2*pi/(N-1), N-1=163
+            w0[ii] = (sin(a) / a) * h;
+        }
+        sumw = sumw + w0[ii];
+        fk   = fk + 1.0;
+        ii   = ii + 1;
+    }
+    sc = 1.4142135624 / sumw;        // sqrt(2)/sum(w)
+    ii = 0;
+    while (ii < NFILT)
+    {
+        w0[ii] = w0[ii] * sc;
+        ii     = ii + 1;
+    }
+
+    // (3) Clear the FIR delay lines and reset the streaming state.
+    ii = 0;
+    while (ii < NFILT)
+    {
+        bufr[ii] = 0.0;
+        bufi[ii] = 0.0;
+        ii       = ii + 1;
+    }
+    wr     = 0;
+    nsmp   = 0;
+    feprev = 60.0;
+    yprev  = complex(0.0, 0.0);
+
+    // ======================================================================
+    //  STREAMING SERVICE LOOP  (one iteration == one incoming sample) ------
+    // ======================================================================
+    while (1)
+    {
+        // -- wait for the "new sample" flag on input port 1 -----------------
+        //    (set by the wrapper at each ADC strobe, cleared when port 0 is
+        //    read; the processor spins here while idle)
+        flagv = in(1);
+        while (flagv == 0)
+        {
+            flagv = in(1);
+        }
+
+        // -- read the new sample from input port 0 (Q20 integer -> float) --
+        x = fin(0) * 0.00000095367431640625;   // 2^-20
+
+        // -- quadrature demodulation at the nominal frequency Fn -----------
+        ph = nsmp & 31;                 // n mod 32
+        yr = x * cosd[ph];
+        yi = x * sind[ph];
+
+        // -- push newest demodulated pair into the circular delay lines ----
+        bufr[wr] = yr;
+        bufi[wr] = yi;
+
+        // -- class-M FIR:  y_r[n] = sum_k w0[k]*yr[n-k] ; y_i likewise ------
+        accr = 0.0;
+        acci = 0.0;
+        idx  = wr;                      // newest sample sits at wr
+        k    = 0;
+        while (k < NFILT)
+        {
+            accr = accr + w0[k] * bufr[idx];
+            acci = acci + w0[k] * bufi[idx];
+            idx  = idx - 1;             // walk backwards in time
+            if (idx < 0) { idx = 163; }
+            k = k + 1;
+        }
+
+        // advance the write pointer for the next sample
+        wr = wr + 1;
+        if (wr > 163) { wr = 0; }
+
+        // -- assemble the phasor  y = y_r - j*y_i --------------------------
+        yi_out = 0.0 - acci;
+        y      = complex(accr, yi_out);
+
+        // -- frequency by consecutive phase difference ---------------------
+        //    fe = Fs/(2*pi) * angle( y * conj(y_prev) ) + Fn
+        //    (angle(y*conj(y_prev)) == diff(unwrap(angle(y))), no wrap bugs)
+        if (nsmp == 0)
+        {
+            dphi = 0.0;                 // no previous phasor yet
+        }
+        else
+        {
+            rot  = y * conj(yprev);
+            dphi = fase(rot);
+        }
+        fe    = 305.5774908 * dphi + 60.0;   // Fs/(2*pi) = 1920/(2*pi)
+        rocof = fe - feprev;                 // ROCOF = diff(fe)
+
+        // -- emit the four results as Q20 integers on io_out ---------------
+        fout(0, accr   * 1048576.0);   // Re{Xe}  * 2^20
+        fout(1, yi_out * 1048576.0);   // Im{Xe}  * 2^20
+        fout(2, fe     * 1048576.0);   // fe      * 2^20
+        fout(3, rocof  * 1048576.0);   // ROCOF   * 2^20
+
+#TOAQUI                     // <-- cheguei pulses here, once per processed sample
+
+        // -- roll the state forward ----------------------------------------
+        yprev  = y;
+        feprev = fe;
+        nsmp   = nsmp + 1;
+    }
+}

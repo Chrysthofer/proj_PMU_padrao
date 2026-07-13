@@ -1,0 +1,26 @@
+PMU_padrao (SAPHO) x MATLAB reference - summary report
+==============================================================
+Test          : Signal Frequency (IEC/IEEE 60255-118)
+Parameters    : A=1  f1=62 Hz  f0=60 Hz  Fs=1920 Hz  Fr=60
+Fixed phase   : 0.7853981634 rad (MATLAB main.m uses random)
+Samples       : 1600 fed / 1600 captured, steady window [400,1600)
+Port scaling  : Q20 (2^20 = 1048576)
+
+Steady-state metrics (hardware vs analytic truth X):
+  TVE   max   : 0.980200 %   (limit 1.20 %)  -> PASS
+  TVE   mean  : 0.842690 %   (model max: 0.979877 %)
+  FE    mean  : +0.000692 Hz  (bias limit 0.010) -> PASS
+  |FE|  max   : 0.179199 Hz   (info: intrinsic per-sample ripple
+                of the MATLAB algorithm, present in the
+                double model as well - not a hardware error)
+  |ROCOF| max : 0.072693 Hz/sample (info)
+
+Replication of the MATLAB algorithm (hardware float vs the
+same algorithm in double precision), max |diff| in window:
+  Re    : 5.205e-06  (limit 1e-04) -> PASS
+  Im    : 5.490e-06  (limit 1e-04) -> PASS
+  fe    : 6.893e-04 Hz (limit 1e-02) -> PASS
+  ROCOF : 1.043e-03  (limit 1e-02) -> PASS
+
+Files: input_0.txt, output_0..3.txt (raw Q20 integers),
+       pmu_results.txt (per-sample table, real units)
