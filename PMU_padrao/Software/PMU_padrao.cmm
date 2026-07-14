@@ -10,9 +10,9 @@
 
 // ============================================================================
 //  PMU PADRAO  -  Standard M-class PMU phasor/frequency/ROCOF estimator
-//  Port of Matilab/PMU_padrao.m to the SAPHO processor (C+-).
+//  Port of Matlab/PMU_padrao.m to the SAPHO processor (C+-).
 //
-//  Fixed operating point (from Matilab/main.m):
+//  Fixed operating point (from Matlab/main.m):
 //      Fs (sampling)  = 1920 Hz
 //      Fn (nominal)   = 60   Hz     -> Fn/Fs = 1/32  (exact 32-sample demod LUT)
 //      Fr (reporting) = 60   Hz     -> class-M filter: frep = 8.19, N = 164 taps

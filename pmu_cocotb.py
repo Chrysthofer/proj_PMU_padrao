@@ -2,15 +2,15 @@
 # =============================================================================
 #  pmu_cocotb.py - cocotb testbench for the SAPHO "PMU_padrao" processor
 #
-#  Replicates Matilab/main.m (Signal Frequency test, IEC/IEEE 60255-118):
+#  Replicates Matlab/main.m (Signal Frequency test, IEC/IEEE 60255-118):
 #      A = 1, f1 = 62 Hz, N = 1600 samples, f0 = 60 Hz, Fs = 1920 Hz, Fr = 60
 #
 #  The Python side (this file):
 #    1. generates the test signal x[n] and its analytic reference phasor X[n]
-#       (port of Matilab/signal_frequency.m, with a FIXED phase for
+#       (port of Matlab/signal_frequency.m, with a FIXED phase for
 #       reproducibility - MATLAB uses a random one);
 #    2. runs a double-precision reference model of the PMU (streaming port of
-#       Matilab/PMU_padrao.m, identical to the C+- program's algorithm);
+#       Matlab/PMU_padrao.m, identical to the C+- program's algorithm);
 #    3. drives the SAPHO processor in the EVENT-DRIVEN (#PRACA) model: it pulses
 #       the hardware itr pin once per ADC sample (emulating the FPGA ADC strobe),
 #       serves that sample on fin(0), and collects the four Q20 integer outputs
@@ -36,7 +36,7 @@ except ImportError:                     # older cocotb
     from cocotb.utils import get_sim_time
 
 # ----------------------------------------------------------------------------
-# Test parameters (mirror Matilab/main.m)
+# Test parameters (mirror Matlab/main.m)
 # ----------------------------------------------------------------------------
 A        = 1.0                    # signal amplitude
 F1       = 62.0                   # signal frequency [Hz]  (60 + 2)
@@ -98,7 +98,7 @@ OUTDIR = Path(__file__).resolve().parent / "PMU_padrao" / "Simulation"
 # Reference generation (ports of the MATLAB sources - the source of truth)
 # ----------------------------------------------------------------------------
 def signal_frequency(a, f1, n, f0, fs, phi):
-    """Port of Matilab/signal_frequency.m (fixed phase instead of random)."""
+    """Port of Matlab/signal_frequency.m (fixed phase instead of random)."""
     x = [a * math.cos(2.0 * math.pi * f1 * k / fs + phi) for k in range(n)]
     ref = [(a / math.sqrt(2.0)) *
            complex(math.cos(2.0 * math.pi * (f1 - f0) * k / fs + phi),
@@ -108,7 +108,7 @@ def signal_frequency(a, f1, n, f0, fs, phi):
 
 
 def filtro_class_m(fs=FS, frep=FREP_FLT, n=NFILT):
-    """Port of Matilab/filtro_classM.m for Fn=60, Fr=60 (frep=8.19, N=164)."""
+    """Port of Matlab/filtro_classM.m for Fn=60, Fr=60 (frep=8.19, N=164)."""
     w = [0.0] * n
     for k in range(n):
         a = 2.0 * math.pi * (2.0 * frep / fs) * (k - n / 2.0)
@@ -119,7 +119,7 @@ def filtro_class_m(fs=FS, frep=FREP_FLT, n=NFILT):
 
 
 def pmu_reference_model(x):
-    """Streaming double-precision port of Matilab/PMU_padrao.m.
+    """Streaming double-precision port of Matlab/PMU_padrao.m.
 
     Same algorithm the C+- program implements: quadrature demod at Fn,
     class-M FIR, frequency from the consecutive-phasor angle difference,
@@ -161,7 +161,7 @@ def pmu_reference_model(x):
 
 
 def tve_pct(est, ref):
-    """Port of Matilab/TVE.m for a single pair of phasors."""
+    """Port of Matlab/TVE.m for a single pair of phasors."""
     d = est - ref
     return 100.0 * math.sqrt((d.real ** 2 + d.imag ** 2) /
                              (ref.real ** 2 + ref.imag ** 2))
@@ -363,7 +363,7 @@ async def pmu_signal_frequency(dut):
 
     # ---------------- analysis ---------------------------------------------
     # y_hw[n] estimates the phasor at sample n - GDELAY (FIR group delay),
-    # exactly like Matilab/PMU_padrao.m which drops floor(N/2) samples.
+    # exactly like Matlab/PMU_padrao.m which drops floor(N/2) samples.
     steady0 = STEADY0 if ncap > STEADY0 + 50 else max(GDELAY + 1, ncap // 2)
     win = [n for n in range(steady0, ncap)]
     tve_hw  = {n: tve_pct(y_hw[n], xref[n - GDELAY]) for n in win}

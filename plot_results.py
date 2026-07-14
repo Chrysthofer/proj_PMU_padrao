@@ -2,7 +2,7 @@
 #  plot_results.py - graficos INTERATIVOS dos resultados da PMU SAPHO (Plotly)
 #
 #  Le PMU_padrao/Simulation/pmu_results.txt (gerado pelo pmu_cocotb.py) e
-#  reproduz os 6 paineis do Matilab/main.m: sinal de entrada, amplitude,
+#  reproduz os 6 paineis do Matlab/main.m: sinal de entrada, amplitude,
 #  fase, frequencia, ROCOF e TVE - referencia analitica vs estimado no
 #  processador.
 #

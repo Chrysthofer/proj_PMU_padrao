@@ -6,7 +6,7 @@ automatizada em Python/cocotb contra a implementação MATLAB de referência.
 
 O estimador segue a norma IEC/IEEE 60255-118-1: demodulação em quadratura na
 frequência nominal, filtro classe M de 164 taps, fasor, frequência e ROCOF.
-A referência (source of truth) é o código MATLAB em `Matilab/`.
+A referência (source of truth) é o código MATLAB em `Matlab/`.
 
 ## Resultado da validação
 
@@ -67,7 +67,7 @@ processador e do gatilho: [docs/diagrama_ciclo_processador.html](docs/diagrama_c
 ## Estrutura
 
 ```
-Matilab/                  referência MATLAB (source of truth)
+Matlab/                  referência MATLAB (source of truth)
 PMU_padrao/Software/      PMU_padrao.cmm (C±) e .asm gerado
 PMU_padrao/Hardware/      Verilog e imagens de memória gerados pelo yanc
 PMU_padrao/Simulation/    resultados TXT, gráficos, xcheck_tb.v, baseline

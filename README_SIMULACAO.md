@@ -1,6 +1,6 @@
 # PMU padrão em SAPHO — simulação cocotb (fast sim)
 
-Processador SAPHO que replica a PMU classe M do MATLAB (`Matilab/PMU_padrao.m`),
+Processador SAPHO que replica a PMU classe M do MATLAB (`Matlab/PMU_padrao.m`),
 validado por um testbench cocotb que gera o estímulo e analisa as saídas em TXT.
 
 ## Como simular
@@ -20,7 +20,7 @@ AURORA — com poucas amostras o TVE inclui o transitório do filtro e pode "fal
 
 ## Teste implementado
 
-*Signal Frequency* (IEC/IEEE 60255-118), espelhando `Matilab/main.m`:
+*Signal Frequency* (IEC/IEEE 60255-118), espelhando `Matlab/main.m`:
 `A=1, f1=62 Hz, f0=60 Hz, Fs=1920 Hz, Fr=60, N=1600`. A fase inicial é fixa
 (π/4) para reprodutibilidade — o MATLAB usa fase aleatória.
 

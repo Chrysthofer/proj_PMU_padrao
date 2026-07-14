@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 
 # MATLAB sources and Simulink caches (kept local, not versioned)
-Matilab/
+Matlab/
 
 # simulator by-products
 *.vvp
