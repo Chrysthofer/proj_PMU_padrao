@@ -152,6 +152,55 @@ def tve_pct(est, ref):
                              (ref.real ** 2 + ref.imag ** 2))
 
 
+def generate_plots(log):
+    """Render pmu_plots.png by running plot_results.py in an external Python.
+
+    Aurora's bundled MSYS interpreter has no matplotlib, so the plots are
+    delegated to a system Python that does.  Search order: PMU_PLOT_PYTHON
+    env var, common Windows install paths, the 'py' launcher.  Skipping is
+    non-fatal: the TXT outputs are already written.
+    """
+    import shutil
+    import subprocess
+
+    if os.environ.get("PMU_MAKE_PLOTS", "1") != "1":
+        return
+    script = Path(__file__).resolve().parent / "plot_results.py"
+    if not script.exists():
+        log.warning("PMU: plot_results.py not found, skipping plots")
+        return
+
+    local = os.environ.get("LOCALAPPDATA", "")
+    candidates = [os.environ.get("PMU_PLOT_PYTHON", "")]
+    candidates += [str(Path(local) / "Programs" / "Python" / d / "python.exe")
+                   for d in ("Python314", "Python313", "Python312",
+                             "Python311", "Python310")]
+    py = shutil.which("py")
+    launchers = [[c] for c in candidates if c and Path(c).exists()]
+    if py:
+        launchers.append([py, "-3"])
+
+    for cmd in launchers:
+        try:
+            probe = subprocess.run(cmd + ["-c", "import matplotlib"],
+                                   capture_output=True, timeout=60)
+            if probe.returncode != 0:
+                continue
+            run = subprocess.run(cmd + [str(script)], capture_output=True,
+                                 text=True, timeout=300,
+                                 cwd=str(script.parent))
+            if run.returncode == 0:
+                log.info("PMU: plots -> %s" % run.stdout.strip()
+                         .splitlines()[-1] if run.stdout.strip() else "ok")
+            else:
+                log.warning("PMU: plot_results.py failed:\n%s" % run.stderr)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    log.warning("PMU: no Python with matplotlib found, skipping plots "
+                "(set PMU_PLOT_PYTHON or run plot_results.py manually)")
+
+
 # ----------------------------------------------------------------------------
 # DUT drivers - emulate the FPGA ADC front-end wrapper
 # ----------------------------------------------------------------------------
@@ -382,6 +431,9 @@ async def pmu_signal_frequency(dut):
                   % (stats["tve_max"], stats["fe_max"],
                      stats["rocof_max"], dre, dfe))
     dut._log.info("PMU: TXT written to %s" % OUTDIR)
+
+    # plots come before the asserts so they exist even when a check fails
+    generate_plots(dut._log)
 
     assert ncap == NSAMP and all(len(o) == NSAMP for o in outs), \
         "output count mismatch: %s" % [len(o) for o in outs]

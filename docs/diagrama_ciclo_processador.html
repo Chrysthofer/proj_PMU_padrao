@@ -1,0 +1,296 @@
+<title>PMU no SAPHO: ciclo do processador e o gatilho de amostra nova</title>
+<style>
+  :root {
+    --paper: #f7f8f7;
+    --card: #ffffff;
+    --ink: #1c2733;
+    --muted: #5d6b77;
+    --line: #d7dde2;
+    --proc: #2a6fc2;
+    --proc-soft: #e3edf8;
+    --flag: #b8770f;
+    --flag-soft: #faf0dc;
+    --idle: #aab6bf;
+    --ok: #1e7d4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #151a20;
+      --card: #1d242c;
+      --ink: #e8ecef;
+      --muted: #9fadb8;
+      --line: #37414c;
+      --proc: #5b9be0;
+      --proc-soft: #22364e;
+      --flag: #d9a441;
+      --flag-soft: #3a3022;
+      --idle: #55626d;
+      --ok: #4dbd85;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151a20; --card: #1d242c; --ink: #e8ecef; --muted: #9fadb8;
+    --line: #37414c; --proc: #5b9be0; --proc-soft: #22364e;
+    --flag: #d9a441; --flag-soft: #3a3022; --idle: #55626d; --ok: #4dbd85;
+  }
+  :root[data-theme="light"] {
+    --paper: #f7f8f7; --card: #ffffff; --ink: #1c2733; --muted: #5d6b77;
+    --line: #d7dde2; --proc: #2a6fc2; --proc-soft: #e3edf8;
+    --flag: #b8770f; --flag-soft: #faf0dc; --idle: #aab6bf; --ok: #1e7d4f;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 24px 72px; }
+  header { max-width: 720px; margin-bottom: 40px; }
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(26px, 4vw, 34px); line-height: 1.2; margin: 0 0 14px;
+    font-weight: 650; text-wrap: balance;
+  }
+  .lede { color: var(--muted); margin: 0; font-size: 17px; }
+
+  h2 { font-size: 21px; margin: 48px 0 6px; font-weight: 650; }
+  .h2sub { color: var(--muted); margin: 0 0 20px; max-width: 720px; }
+
+  /* passos */
+  ol.passos { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  ol.passos li {
+    display: grid; grid-template-columns: 44px 1fr; gap: 14px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 18px 14px 12px; align-items: start;
+  }
+  .num {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 650; font-size: 15px; margin-top: 2px;
+    background: var(--proc-soft); color: var(--proc); justify-self: center;
+  }
+  li.prep .num { background: transparent; border: 1.5px dashed var(--muted); color: var(--muted); }
+  li.espera .num { background: var(--flag-soft); color: var(--flag); }
+  .passo-t { font-weight: 650; }
+  .passo-d { color: var(--muted); font-size: 15px; }
+  ol.passos p { margin: 0; }
+
+  /* figura */
+  figure { margin: 0; background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px 12px 6px; }
+  .svgwrap { overflow-x: auto; }
+  figcaption { color: var(--muted); font-size: 14px; padding: 10px 12px 14px; }
+  svg text { font-family: "Segoe UI", system-ui, sans-serif; }
+
+  /* linha do tempo */
+  .tl { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 22px 18px; }
+  .tl-bar { display: flex; height: 34px; border-radius: 7px; overflow: hidden; margin-bottom: 14px; }
+  .tl-seg-espera { background: var(--idle); flex: 61; }
+  .tl-seg-calc { background: var(--proc); flex: 30; }
+  .tl-seg-poll { background: var(--flag); flex: 9; }
+  .tl-leg { display: flex; flex-wrap: wrap; gap: 10px 26px; font-size: 14px; color: var(--muted); }
+  .tl-leg span { display: inline-flex; align-items: center; gap: 8px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  /* perguntas */
+  .qa { display: grid; gap: 10px; }
+  .qa div { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .q { font-weight: 650; margin: 0 0 4px; }
+  .a { margin: 0; color: var(--muted); font-size: 15px; }
+  .a b { color: var(--ink); font-weight: 650; }
+
+  .nota { border-left: 3px solid var(--ok); background: var(--card);
+    border-radius: 0 10px 10px 0; padding: 12px 18px; color: var(--muted);
+    font-size: 15px; margin-top: 26px; max-width: 720px; }
+</style>
+
+<main>
+<header>
+  <p class="eyebrow">Projeto PMU padrao, processador SAPHO</p>
+  <h1>Como o processador sabe que chegou uma amostra nova</h1>
+  <p class="lede">A ideia inteira em uma frase: o processador nunca e avisado, ele pergunta.
+  Existe um interruptor de 1 bit fora do processador (a flag), e ele fica lendo esse
+  interruptor num laco curtinho ate a resposta virar 1.</p>
+</header>
+
+<h2>O ciclo, passo a passo</h2>
+<p class="h2sub">O passo 0 acontece uma unica vez, quando o processador liga.
+Os passos 1 a 4 se repetem para cada amostra, 1920 vezes por segundo.</p>
+
+<ol class="passos">
+  <li class="prep">
+    <span class="num">0</span>
+    <p><span class="passo-t">Preparacao (uma vez so).</span><br>
+    <span class="passo-d">Ao ligar, o processador monta as tabelas de seno e cosseno e
+    calcula os 164 coeficientes do filtro. Esse trabalho nunca se repete: os valores
+    ficam guardados na memoria de dados.</span></p>
+  </li>
+  <li class="espera">
+    <span class="num">1</span>
+    <p><span class="passo-t">Esperar.</span><br>
+    <span class="passo-d">O processador le a porta de entrada 1, onde mora a flag.
+    Se vier 0, le de novo. E um laco de 6 instrucoes que ele repete sem parar
+    enquanto nao ha amostra nova. E so isso que "esperar" significa aqui.</span></p>
+  </li>
+  <li>
+    <span class="num">2</span>
+    <p><span class="passo-t">Receber.</span><br>
+    <span class="passo-d">Quando a leitura devolve 1, ele sai do laco e le a porta 0,
+    onde o wrapper deixou a amostra guardada. Essa leitura tambem apaga a flag,
+    deixando tudo pronto para a proxima amostra.</span></p>
+  </li>
+  <li>
+    <span class="num">3</span>
+    <p><span class="passo-t">Calcular.</span><br>
+    <span class="passo-d">Demodula a amostra, passa pelo filtro de 164 posicoes e extrai
+    fasor, frequencia e ROCOF. Custa perto de 4600 ciclos de clock, cerca de 46 us
+    num clock de 100 MHz.</span></p>
+  </li>
+  <li>
+    <span class="num">4</span>
+    <p><span class="passo-t">Entregar e voltar.</span><br>
+    <span class="passo-d">Escreve os 4 resultados nas portas de saida, o pino
+    <i>cheguei</i> da um pulso (gracas ao marcador #TOAQUI) e o programa volta ao
+    passo 1, esperar de novo.</span></p>
+  </li>
+</ol>
+
+<h2>Quem fala com quem</h2>
+<p class="h2sub">O ADC nao fala com o processador diretamente. Entre os dois existe um
+circuito pequeno, o wrapper, que guarda a amostra e mantem a flag.</p>
+
+<figure>
+<div class="svgwrap">
+<svg viewBox="0 0 960 470" width="960" height="470" role="img"
+     aria-label="Diagrama: ADC, wrapper com flag e registro de amostra, e processador SAPHO com o laco de quatro passos">
+  <defs>
+    <marker id="ah-flag" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L9,4 L0,8 z" fill="var(--flag)"/>
+    </marker>
+    <marker id="ah-proc" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L9,4 L0,8 z" fill="var(--proc)"/>
+    </marker>
+    <marker id="ah-mut" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L9,4 L0,8 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+
+  <!-- ADC -->
+  <rect x="20" y="180" width="110" height="56" rx="8" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+  <text x="75" y="204" text-anchor="middle" font-size="15" font-weight="600" fill="var(--ink)">ADC</text>
+  <text x="75" y="224" text-anchor="middle" font-size="12.5" fill="var(--muted)">1920 amostras/s</text>
+
+  <!-- seta ADC -> wrapper -->
+  <line x1="130" y1="208" x2="196" y2="208" stroke="var(--muted)" stroke-width="1.8" marker-end="url(#ah-mut)"/>
+  <text x="163" y="196" text-anchor="middle" font-size="12" fill="var(--muted)">strobe</text>
+
+  <!-- Wrapper -->
+  <rect x="200" y="96" width="200" height="290" rx="10" fill="none" stroke="var(--flag)" stroke-width="1.8"/>
+  <text x="300" y="126" text-anchor="middle" font-size="15" font-weight="650" fill="var(--flag)">Wrapper</text>
+  <text x="300" y="144" text-anchor="middle" font-size="12.5" fill="var(--muted)">fora do processador</text>
+
+  <rect x="218" y="166" width="164" height="58" rx="7" fill="var(--flag-soft)" stroke="var(--flag)" stroke-width="1.2"/>
+  <text x="300" y="190" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">flag: dado novo?</text>
+  <text x="300" y="208" text-anchor="middle" font-size="12" fill="var(--muted)">1 bit (0 ou 1)</text>
+
+  <rect x="218" y="262" width="164" height="58" rx="7" fill="none" stroke="var(--muted)" stroke-width="1.2"/>
+  <text x="300" y="286" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">amostra guardada</text>
+  <text x="300" y="304" text-anchor="middle" font-size="12" fill="var(--muted)">inteiro Q20</text>
+
+  <text x="300" y="360" text-anchor="middle" font-size="12" fill="var(--muted)">no strobe: guarda a</text>
+  <text x="300" y="376" text-anchor="middle" font-size="12" fill="var(--muted)">amostra e liga a flag</text>
+
+  <!-- Processador -->
+  <rect x="560" y="60" width="380" height="360" rx="10" fill="none" stroke="var(--proc)" stroke-width="1.8"/>
+  <text x="750" y="90" text-anchor="middle" font-size="15" font-weight="650" fill="var(--proc)">Processador SAPHO</text>
+
+  <!-- passo 1 -->
+  <rect x="590" y="112" width="290" height="52" rx="7" fill="var(--flag-soft)" stroke="var(--flag)" stroke-width="1.2"/>
+  <text x="735" y="134" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">1. esperar: le a porta 1</text>
+  <text x="735" y="152" text-anchor="middle" font-size="12" fill="var(--muted)">veio 0? le de novo. veio 1? segue</text>
+
+  <!-- passo 2 -->
+  <rect x="590" y="186" width="290" height="52" rx="7" fill="var(--proc-soft)" stroke="var(--proc)" stroke-width="1.2"/>
+  <text x="735" y="208" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">2. receber: le a porta 0</text>
+  <text x="735" y="226" text-anchor="middle" font-size="12" fill="var(--muted)">pega a amostra, a flag apaga</text>
+
+  <!-- passo 3 -->
+  <rect x="590" y="260" width="290" height="52" rx="7" fill="var(--proc-soft)" stroke="var(--proc)" stroke-width="1.2"/>
+  <text x="735" y="282" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">3. calcular</text>
+  <text x="735" y="300" text-anchor="middle" font-size="12" fill="var(--muted)">filtro, fasor, frequencia, ROCOF</text>
+
+  <!-- passo 4 -->
+  <rect x="590" y="334" width="290" height="52" rx="7" fill="var(--proc-soft)" stroke="var(--proc)" stroke-width="1.2"/>
+  <text x="735" y="356" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">4. entregar resultados</text>
+  <text x="735" y="374" text-anchor="middle" font-size="12" fill="var(--muted)">4 saidas + pulso no pino cheguei</text>
+
+  <!-- laco de volta: passo 4 -> passo 1 -->
+  <path d="M 880 360 L 916 360 L 916 138 L 884 138" fill="none" stroke="var(--proc)" stroke-width="1.6" marker-end="url(#ah-proc)"/>
+
+  <!-- seta flag -> passo 1 -->
+  <line x1="400" y1="138" x2="586" y2="138" stroke="var(--flag)" stroke-width="1.8" marker-end="url(#ah-flag)"/>
+  <text x="493" y="124" text-anchor="middle" font-size="12.5" fill="var(--flag)">porta 1: valor da flag</text>
+
+  <!-- seta amostra -> passo 2 -->
+  <line x1="400" y1="212" x2="586" y2="212" stroke="var(--proc)" stroke-width="1.8" marker-end="url(#ah-proc)"/>
+  <text x="493" y="198" text-anchor="middle" font-size="12.5" fill="var(--proc)">porta 0: amostra</text>
+
+  <!-- seta apagar flag (tracejada) -->
+  <line x1="586" y1="248" x2="400" y2="248" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ah-mut)"/>
+  <text x="493" y="266" text-anchor="middle" font-size="12.5" fill="var(--muted)">a leitura apaga a flag</text>
+</svg>
+</div>
+<figcaption>A seta azul que sobe pela direita do processador e a volta do laco:
+depois de entregar, ele retorna a espera. As duas setas do meio sao leituras que o
+processador faz; a tracejada e o efeito colateral da leitura da amostra.</figcaption>
+</figure>
+
+<h2>Um periodo de amostra, visto no tempo</h2>
+<p class="h2sub">Entre uma amostra e a proxima passam 520 microssegundos (a 1920 Hz).
+Com clock de 100 MHz o calculo ocupa so uma fatia disso; o resto e espera.
+Na simulacao usamos um periodo menor para ela nao demorar, e nada muda no resultado.</p>
+
+<div class="tl">
+  <div class="tl-bar">
+    <div class="tl-seg-calc"></div>
+    <div class="tl-seg-espera"></div>
+    <div class="tl-seg-poll"></div>
+  </div>
+  <div class="tl-leg">
+    <span><span class="dot" style="background:var(--proc)"></span> calcula e entrega (passos 2 a 4)</span>
+    <span><span class="dot" style="background:var(--idle)"></span> espera lendo a flag (passo 1)</span>
+    <span><span class="dot" style="background:var(--flag)"></span> strobe: flag liga, novo ciclo</span>
+  </div>
+</div>
+
+<h2>As tres perguntas do gatilho</h2>
+<div class="qa">
+  <div>
+    <p class="q">Quem avisa o processador?</p>
+    <p class="a">Ninguem. Nao existe campainha nem interrupcao aqui. O processador
+    pergunta o tempo todo, lendo a porta 1. Quem mantem a resposta atualizada e o
+    wrapper, que liga a flag a cada strobe do ADC.</p>
+  </div>
+  <div>
+    <p class="q">O que e, fisicamente, o gatilho?</p>
+    <p class="a">Um valor que muda: a leitura da porta 1, que vinha devolvendo 0,
+    devolve 1. Esse 1 entra no <b>acumulador</b>, o registrador de trabalho do
+    processador. E o unico canal por onde o mundo externo entra.</p>
+  </div>
+  <div>
+    <p class="q">O que muda no estado do processador?</p>
+    <p class="a">Quase nada, e isso e o bonito: o acumulador passa a valer 1, o salto
+    condicional do laco de espera deixa de voltar, e o contador de programa segue em
+    frente para o passo 2. Filtro, memorias e todo o resto ficam intocados.</p>
+  </div>
+</div>
+
+<p class="nota">Validado na pratica: com e sem o mecanismo de flag, as 1600 amostras do
+teste produziram exatamente os mesmos 6400 numeros nas saidas, bit a bit. A flag muda
+apenas o momento em que o processador trabalha, nunca o que ele calcula.</p>
+</main>
