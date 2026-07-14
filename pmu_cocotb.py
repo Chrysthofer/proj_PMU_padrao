@@ -11,8 +11,9 @@
 #       reproducibility - MATLAB uses a random one);
 #    2. runs a double-precision reference model of the PMU (streaming port of
 #       Matilab/PMU_padrao.m, identical to the C+- program's algorithm);
-#    3. drives the SAPHO processor: one Q20 integer sample (round(x*2^20)) per
-#       fin(0) request, and collects the four Q20 integer outputs
+#    3. drives the SAPHO processor in the EVENT-DRIVEN (#PRACA) model: it pulses
+#       the hardware itr pin once per ADC sample (emulating the FPGA ADC strobe),
+#       serves that sample on fin(0), and collects the four Q20 integer outputs
 #       (Re{Xe}, Im{Xe}, fe, ROCOF) * 2^20;
 #    4. writes everything to TXT files in PMU_padrao/Simulation/ and checks
 #       TVE / FE / ROCOF limits.
@@ -52,14 +53,28 @@ GDELAY   = NFILT // 2             # FIR group delay = 82 samples
 SCALE    = 1 << 20                # Q20 port scaling (must match the .cmm)
 MASK32   = 0xFFFFFFFF
 
-# ADC-strobe emulation: a new sample is latched and the "new sample" flag
-# (input port 1) is raised every PMU_STROBE_CLKS clock cycles, like the FPGA
-# front-end wrapper will do.  Must exceed the per-sample processing time
-# (~4.6k cycles); 6000 keeps the processor waiting on the flag ~25% of the
-# period.  The real 100 MHz / 1920 Hz ratio would be 52083 (set the env var
-# to try it - the results are identical, the sim just takes ~9x longer).
+# ADC-strobe emulation (EVENT-DRIVEN / #PRACA model): every PMU_STROBE_CLKS
+# clock cycles a new sample is latched onto input port 0 and the itr pin is
+# pulsed, exactly like the FPGA ADC front-end will do.  The itr pulse makes the
+# processor jump to #PRACA and process that one sample.  STROBE_CLKS must exceed
+# the per-sample processing time (~4.6k cycles) so the processor is back at idle
+# before the next strobe; 6000 leaves ~25% headroom.  The real 100 MHz/1920 Hz
+# ratio would be 52083 (set the env var to try it - results are identical, the
+# sim just takes ~9x longer).
 STROBE_CLKS = int(os.environ.get("PMU_STROBE_CLKS", "6000"))
 CLK_NS      = 10                  # testbench clock period
+
+# One-time startup hold-off: main() builds the demod LUTs and the 164-tap FIR
+# ONCE before it can accept samples.  itr must stay LOW during that build (an
+# early pulse would abort it mid-way), so the first strobe waits this many
+# clocks after reset - the FPGA wrapper does the same with a power-on counter.
+# Tune against the first sim: the build is ~15-25k cycles; 40000 is safe slack.
+STARTUP_CLKS = int(os.environ.get("PMU_STARTUP_CLKS", "40000"))
+
+# itr pulse width.  While itr is high the PC is held at the #PRACA entry; the
+# per-sample code runs once itr drops.  A short pulse (a couple of clocks) is
+# enough to latch the jump.
+ITR_PULSE_CLKS = int(os.environ.get("PMU_ITR_PULSE_CLKS", "2"))
 
 STEADY0  = 400                    # first sample of the steady-state window
 
@@ -205,32 +220,43 @@ def generate_plots(log):
 # DUT drivers - emulate the FPGA ADC front-end wrapper
 # ----------------------------------------------------------------------------
 async def adc_strobe(dut, samples_int, adc, period_clks):
-    """Latch one sample + raise the new-sample flag every period_clks cycles.
+    """Latch one sample + pulse the itr pin every period_clks cycles.
 
-    Mirrors the FPGA wrapper: at each ADC strobe the sample register and the
-    flag flip-flop are set, regardless of what the processor is doing.  If
-    the flag is still up from the previous strobe the processor missed a
-    sample (overrun).  Strobing starts once the processor first polls the
-    flag (i.e. after its one-time filter build), like enabling the ADC
-    stream after init.
+    Mirrors the FPGA ADC front-end: at each strobe the sample register is
+    updated and the itr pin is pulsed, which makes the processor jump to
+    #PRACA and process exactly that one sample.  Strobing starts only after
+    STARTUP_CLKS (the one-time LUT/FIR build must finish with itr low first).
+    If the previous sample has not been fully processed when the next strobe
+    fires (fewer outputs than strobes), it is flagged as an overrun.
     """
-    await adc["first_poll"].wait()
+    # hold itr low through reset + the one-time startup build
+    for _ in range(STARTUP_CLKS):
+        await FallingEdge(dut.clk)
+
     for i, s in enumerate(samples_int):
-        await Timer(period_clks * CLK_NS, "ns")
-        if adc["flag"]:
-            adc["overruns"] += 1
+        # present the new sample, then pulse itr -> jump to #PRACA
         adc["sample"] = s
-        adc["flag"] = 1
+        dut.itr.value = 1
+        for _ in range(ITR_PULSE_CLKS):
+            await FallingEdge(dut.clk)
+        dut.itr.value = 0
         adc["strobed"] = i + 1
+        # overrun check: the processor should have emitted all 4 outputs of the
+        # previous sample (== i completed samples) before this strobe landed
+        if adc["produced"] < i:
+            adc["overruns"] += 1
+        # wait out the rest of the sample period before the next strobe
+        for _ in range(max(1, period_clks - ITR_PULSE_CLKS)):
+            await FallingEdge(dut.clk)
 
 
 async def bus_server(dut, adc):
-    """Answer the processor's input reads (req_in one-hot: 1=port0, 2=port1).
+    """Answer the processor's input reads (req_in one-hot: 1 == port 0).
 
-    Port 1 serves the new-sample flag; reading port 0 delivers the latched
-    sample and clears the flag - exactly the FPGA wrapper's behaviour.  The
-    value is placed on the bus at the time step after req_in rises, i.e.
-    before the closing posedge at which the processor latches it.
+    In the #PRACA model there is a single input port: reading port 0 (fin(0))
+    delivers the latched ADC sample.  The value is placed on the bus at the
+    time step after req_in rises, i.e. before the closing posedge at which the
+    processor latches it.
     """
     sig_in = getattr(dut, "in")         # 'in' is a Python keyword
     while True:
@@ -243,18 +269,18 @@ async def bus_server(dut, adc):
         if req == 0:
             continue
         await NextTimeStep()
-        if req == 1:                    # port 0: consume the sample
+        if req == 1:                    # port 0: serve the sample
             sig_in.value = adc["sample"] & MASK32
-            adc["flag"] = 0
             adc["consumed"] += 1
-        elif req == 2:                  # port 1: serve the flag
-            sig_in.value = adc["flag"]
-            if not adc["first_poll"].is_set():
-                adc["first_poll"].set()
 
 
-async def collect_outputs(dut, outs, done_evt, nsamp):
-    """Record the output port (signed) whenever out_en is one-hot (0..3)."""
+async def collect_outputs(dut, outs, adc, done_evt, nsamp):
+    """Record the output port (signed) whenever out_en is one-hot (0..3).
+
+    Port 3 (ROCOF) is the last fout() of each sample, so its running count is
+    the number of fully-produced samples - published in adc["produced"] for the
+    strobe's overrun check.
+    """
     sig_out = getattr(dut, "out")
     port_of = {1: 0, 2: 1, 4: 2, 8: 3}
     while True:
@@ -272,9 +298,11 @@ async def collect_outputs(dut, outs, done_evt, nsamp):
         except ValueError:
             raw = 0
         outs[port].append(raw)
-        if port == 3 and len(outs[3]) % 160 == 0:
-            dut._log.info("PMU: %d/%d samples processed (sim time %.3f ms)"
-                          % (len(outs[3]), nsamp, get_sim_time("ns") / 1e6))
+        if port == 3:
+            adc["produced"] = len(outs[3])
+            if len(outs[3]) % 160 == 0:
+                dut._log.info("PMU: %d/%d samples processed (sim time %.3f ms)"
+                              % (len(outs[3]), nsamp, get_sim_time("ns") / 1e6))
         if len(outs[3]) >= nsamp:
             done_evt.set()
             return
@@ -292,6 +320,7 @@ async def pmu_signal_frequency(dut):
 
     # ---------------- clock / reset ----------------------------------------
     getattr(dut, "in").value = 0
+    dut.itr.value = 0                 # itr must stay low through the startup build
     dut.rst.value = 1
     Clock(dut.clk, 10, "ns").start()
     for _ in range(4):
@@ -301,15 +330,16 @@ async def pmu_signal_frequency(dut):
     # ---------------- run --------------------------------------------------
     outs = [[], [], [], []]
     done = Event()
-    adc = {"sample": 0, "flag": 0, "consumed": 0, "strobed": 0,
-           "overruns": 0, "first_poll": Event()}
+    adc = {"sample": 0, "consumed": 0, "strobed": 0, "produced": 0,
+           "overruns": 0}
     cocotb.start_soon(adc_strobe(dut, x_int, adc, STROBE_CLKS))
     cocotb.start_soon(bus_server(dut, adc))
-    cocotb.start_soon(collect_outputs(dut, outs, done, NSAMP))
+    cocotb.start_soon(collect_outputs(dut, outs, adc, done, NSAMP))
 
-    # sim-time watchdog: startup (filter build) + one strobe period per
+    # sim-time watchdog: one-time startup hold-off + one strobe period per
     # sample + generous slack
-    timeout_ns = int(50e6 * 10 + NSAMP * (STROBE_CLKS + 5000) * CLK_NS)
+    timeout_ns = int((STARTUP_CLKS + NSAMP * (STROBE_CLKS + 5000)) * CLK_NS
+                     + 50e6 * 10)
     await First(done.wait(), Timer(timeout_ns, "ns"))
     assert done.is_set(), (
         "PMU timeout: %d strobed / %d consumed / %d produced of %d "
@@ -317,10 +347,12 @@ async def pmu_signal_frequency(dut):
         % (adc["strobed"], adc["consumed"], len(outs[3]), NSAMP,
            [len(o) for o in outs]))
     assert adc["overruns"] == 0, (
-        "%d overruns: processor missed strobes (STROBE_CLKS=%d too short?)"
-        % (adc["overruns"], STROBE_CLKS))
-    dut._log.info("PMU: %d strobes, %d consumed, 0 overruns (period %d clks)"
-                  % (adc["strobed"], adc["consumed"], STROBE_CLKS))
+        "%d overruns: itr strobed before the previous sample finished "
+        "(STROBE_CLKS=%d too short?)" % (adc["overruns"], STROBE_CLKS))
+    dut._log.info("PMU: %d itr strobes, %d samples read, 0 overruns "
+                  "(period %d clks, startup hold-off %d clks)"
+                  % (adc["strobed"], adc["consumed"], STROBE_CLKS,
+                     STARTUP_CLKS))
 
     ncap = len(outs[3])
     re_hw    = [v / SCALE for v in outs[0][:ncap]]
@@ -397,8 +429,8 @@ async def pmu_signal_frequency(dut):
         f.write("Samples       : %d fed / %d captured, steady window [%d,%d)\n"
                 % (NSAMP, ncap, steady0, ncap))
         f.write("Port scaling  : Q20 (2^20 = %d)\n" % SCALE)
-        f.write("ADC handshake : strobe every %d clks, flag on port 1, "
-                "%d overruns\n\n" % (STROBE_CLKS, adc["overruns"]))
+        f.write("ADC handshake : itr strobe every %d clks (#PRACA per-sample "
+                "restart), %d overruns\n\n" % (STROBE_CLKS, adc["overruns"]))
         f.write("Steady-state metrics (hardware vs analytic truth X):\n")
         f.write("  TVE   max   : %.6f %%   (limit %.2f %%)  -> %s\n"
                 % (stats["tve_max"], TVE_MAX_PCT,

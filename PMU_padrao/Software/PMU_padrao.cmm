@@ -4,7 +4,7 @@
 #NBEXPO 8
 #NDSTAC 64
 #SDEPTH 32
-#NUIOIN 2
+#NUIOIN 1
 #NUIOOU 4
 #NUGAIN 128
 
@@ -17,21 +17,30 @@
 //      Fn (nominal)   = 60   Hz     -> Fn/Fs = 1/32  (exact 32-sample demod LUT)
 //      Fr (reporting) = 60   Hz     -> class-M filter: frep = 8.19, N = 164 taps
 //
-//  STREAMING / INTERACTIVE model (NOT a batch while over a stored vector):
-//  main() first builds the demod LUTs and the FIR coefficients ONCE, then enters
-//  an endless service loop.  Each pass consumes exactly ONE new sample x[n] from
-//  input port 0 (fin) and emits ONE set of results.  The single #TOAQUI marker
-//  sits inside that loop, so the hardware 'cheguei' pin pulses once per sample -
-//  i.e. "cada ciclo do #TOAQUI = cada amostra que entra no processador".
+//  EVENT-DRIVEN (#PRACA) STREAMING MODEL:
+//  main() builds the demod LUTs and the FIR coefficients ONCE, clears the
+//  streaming state, then executes 'return' - the processor idles.  From then
+//  on each new ADC sample is announced by a HARDWARE STROBE on the itr pin
+//  (driven by the ADC front-end on the FPGA; by the cocotb testbench in
+//  simulation).  Every itr pulse makes the processor jump to the #PRACA marker,
+//  which reads exactly ONE new sample x[n] from input port 0 (fin), emits ONE
+//  set of results, rolls the streaming state forward, and falls back to idle.
+//  So "cada pulso de itr = cada amostra que entra no processador".
 //
-//  NEW-SAMPLE HANDSHAKE (input port 1):
-//  in()/fin() do NOT wait for data - they sample io_in on the spot.  An
-//  external wrapper (the ADC front-end on FPGA; the cocotb testbench in
-//  simulation) latches each new sample and raises a 1-bit flag on INPUT
-//  PORT 1 at every sample strobe; reading the sample on INPUT PORT 0
-//  clears the flag.  The program busy-waits on port 1 before consuming
-//  port 0, so each loop iteration processes exactly one fresh sample no
-//  matter how fast the processor clock is.
+//  WHY #PRACA AND NOT A FULL HARDWARE RESET (rst):
+//  #PRACA is a WARM restart - it only redirects the PC to the marker; it does
+//  NOT clear data memory nor re-run the startup.  Therefore the 164-tap FIR
+//  delay line and all persistent state (wr, nsmp, yprev, feprev) survive from
+//  one sample to the next, exactly what a streaming filter needs.  A full rst
+//  would restart main() from the top, rebuild the LUTs every sample and wipe
+//  the filter history - producing wrong results.  On the FPGA the itr pin is a
+//  real hardware input, so this IS a hardware-triggered restart, just the warm
+//  kind that preserves state.
+//
+//  RESULT-READY STROBE (#TOAQUI):
+//  The single #TOAQUI marker sits right after the four fout() calls, so the
+//  hardware 'cheguei' pin pulses once per processed sample - a "result ready"
+//  flag the wrapper/ADC front-end can use.
 //
 //  I/O SCALING (Q20 fixed point on the ports):
 //  SAPHO's fin() converts the io_in INTEGER to float (I2F, 23-bit signed) and
@@ -63,7 +72,6 @@ float feprev;              // previous frequency est. (for the ROCOF difference)
 void main()
 {
     // ---- scratch (declared up front; note: 'i' is reserved for 3.0+4.0i) ---
-    int   flagv;
     int   ii;
     int   k;
     int   idx;
@@ -87,7 +95,7 @@ void main()
     comp  rot;
 
     // ======================================================================
-    //  STARTUP  (executes once, before the first sample) -------------------
+    //  STARTUP  (executes ONCE at power-on, before the first itr strobe) ---
     // ======================================================================
 
     // (1) Demodulation LUTs.  Because Fn/Fs = 60/1920 = 1/32 exactly, the local
@@ -150,80 +158,77 @@ void main()
     feprev = 60.0;
     yprev  = complex(0.0, 0.0);
 
+    return;   // end of one-time startup; the processor idles until the first
+              // itr strobe jumps it to #PRACA below.
+
     // ======================================================================
-    //  STREAMING SERVICE LOOP  (one iteration == one incoming sample) ------
+    //  PER-SAMPLE SERVICE  (itr strobe -> jump to #PRACA -> one sample) ----
+    //  Reached only via the itr pin, never by fall-through (the return above
+    //  ends the startup pass).  Persistent state survives between entries. ---
     // ======================================================================
-    while (1)
+#PRACA
+
+    // -- read the new sample from input port 0 (Q20 integer -> float) --
+    x = fin(0) * 0.00000095367431640625;   // 2^-20
+
+    // -- quadrature demodulation at the nominal frequency Fn -----------
+    ph = nsmp & 31;                 // n mod 32
+    yr = x * cosd[ph];
+    yi = x * sind[ph];
+
+    // -- push newest demodulated pair into the circular delay lines ----
+    bufr[wr] = yr;
+    bufi[wr] = yi;
+
+    // -- class-M FIR:  y_r[n] = sum_k w0[k]*yr[n-k] ; y_i likewise ------
+    accr = 0.0;
+    acci = 0.0;
+    idx  = wr;                      // newest sample sits at wr
+    k    = 0;
+    while (k < NFILT)
     {
-        // -- wait for the "new sample" flag on input port 1 -----------------
-        //    (set by the wrapper at each ADC strobe, cleared when port 0 is
-        //    read; the processor spins here while idle)
-        flagv = in(1);
-        while (flagv == 0)
-        {
-            flagv = in(1);
-        }
+        accr = accr + w0[k] * bufr[idx];
+        acci = acci + w0[k] * bufi[idx];
+        idx  = idx - 1;             // walk backwards in time
+        if (idx < 0) { idx = 163; }
+        k = k + 1;
+    }
 
-        // -- read the new sample from input port 0 (Q20 integer -> float) --
-        x = fin(0) * 0.00000095367431640625;   // 2^-20
+    // advance the write pointer for the next sample
+    wr = wr + 1;
+    if (wr > 163) { wr = 0; }
 
-        // -- quadrature demodulation at the nominal frequency Fn -----------
-        ph = nsmp & 31;                 // n mod 32
-        yr = x * cosd[ph];
-        yi = x * sind[ph];
+    // -- assemble the phasor  y = y_r - j*y_i --------------------------
+    yi_out = 0.0 - acci;
+    y      = complex(accr, yi_out);
 
-        // -- push newest demodulated pair into the circular delay lines ----
-        bufr[wr] = yr;
-        bufi[wr] = yi;
+    // -- frequency by consecutive phase difference ---------------------
+    //    fe = Fs/(2*pi) * angle( y * conj(y_prev) ) + Fn
+    //    (angle(y*conj(y_prev)) == diff(unwrap(angle(y))), no wrap bugs)
+    if (nsmp == 0)
+    {
+        dphi = 0.0;                 // no previous phasor yet
+    }
+    else
+    {
+        rot  = y * conj(yprev);
+        dphi = fase(rot);
+    }
+    fe    = 305.5774908 * dphi + 60.0;   // Fs/(2*pi) = 1920/(2*pi)
+    rocof = fe - feprev;                 // ROCOF = diff(fe)
 
-        // -- class-M FIR:  y_r[n] = sum_k w0[k]*yr[n-k] ; y_i likewise ------
-        accr = 0.0;
-        acci = 0.0;
-        idx  = wr;                      // newest sample sits at wr
-        k    = 0;
-        while (k < NFILT)
-        {
-            accr = accr + w0[k] * bufr[idx];
-            acci = acci + w0[k] * bufi[idx];
-            idx  = idx - 1;             // walk backwards in time
-            if (idx < 0) { idx = 163; }
-            k = k + 1;
-        }
-
-        // advance the write pointer for the next sample
-        wr = wr + 1;
-        if (wr > 163) { wr = 0; }
-
-        // -- assemble the phasor  y = y_r - j*y_i --------------------------
-        yi_out = 0.0 - acci;
-        y      = complex(accr, yi_out);
-
-        // -- frequency by consecutive phase difference ---------------------
-        //    fe = Fs/(2*pi) * angle( y * conj(y_prev) ) + Fn
-        //    (angle(y*conj(y_prev)) == diff(unwrap(angle(y))), no wrap bugs)
-        if (nsmp == 0)
-        {
-            dphi = 0.0;                 // no previous phasor yet
-        }
-        else
-        {
-            rot  = y * conj(yprev);
-            dphi = fase(rot);
-        }
-        fe    = 305.5774908 * dphi + 60.0;   // Fs/(2*pi) = 1920/(2*pi)
-        rocof = fe - feprev;                 // ROCOF = diff(fe)
-
-        // -- emit the four results as Q20 integers on io_out ---------------
-        fout(0, accr   * 1048576.0);   // Re{Xe}  * 2^20
-        fout(1, yi_out * 1048576.0);   // Im{Xe}  * 2^20
-        fout(2, fe     * 1048576.0);   // fe      * 2^20
-        fout(3, rocof  * 1048576.0);   // ROCOF   * 2^20
+    // -- emit the four results as Q20 integers on io_out ---------------
+    fout(0, accr   * 1048576.0);   // Re{Xe}  * 2^20
+    fout(1, yi_out * 1048576.0);   // Im{Xe}  * 2^20
+    fout(2, fe     * 1048576.0);   // fe      * 2^20
+    fout(3, rocof  * 1048576.0);   // ROCOF   * 2^20
 
 #TOAQUI                     // <-- cheguei pulses here, once per processed sample
 
-        // -- roll the state forward ----------------------------------------
-        yprev  = y;
-        feprev = fe;
-        nsmp   = nsmp + 1;
-    }
+    // -- roll the state forward ----------------------------------------
+    yprev  = y;
+    feprev = fe;
+    nsmp   = nsmp + 1;
+
+    // fall off the end of main -> back to idle, waiting for the next itr strobe
 }
