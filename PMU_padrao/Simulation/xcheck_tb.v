@@ -1,16 +1,24 @@
 // Cross-check testbench: pure Verilog, ZERO Python in the data path.
-// Implements the same ADC front-end wrapper the FPGA will have:
-//   - every STROBE_CLKS cycles: latch next sample from input_0.txt and set
-//     the new-sample flag (input port 1);
-//   - the processor busy-waits on port 1, then reads port 0, which clears
-//     the flag.
+// Implements the same ADC front-end wrapper the FPGA will have, in the
+// EVENT-DRIVEN (#PRACA) model:
+//   - after a one-time startup hold-off (the LUT/FIR build must finish with
+//     itr low), every STROBE_CLKS cycles: latch the next sample from
+//     input_0.txt onto port 0 and PULSE the itr pin, which makes the
+//     processor jump to #PRACA and process exactly that one sample.
 // Dumps the raw output integers; must match cocotb's output_*.txt exactly.
+//
+// NOTE: the PMU_padrao instance below now carries the itr input (generated
+// because the .cmm has a #PRACA marker). Regenerate the hardware in Aurora
+// before simulating; the port order is (clk, rst, in, out, req_in, out_en,
+// itr, cheguei).
 `timescale 1ns/1ps
 
 module xcheck_tb();
 
-parameter NSAMP_X     = 40;      // samples to cross-check
-parameter STROBE_CLKS = 6000;    // ADC strobe period (clock cycles)
+parameter NSAMP_X       = 40;      // samples to cross-check
+parameter STROBE_CLKS   = 6000;    // ADC strobe period (clock cycles)
+parameter STARTUP_CLKS  = 40000;   // one-time LUT/FIR build hold-off (itr low)
+parameter ITR_PULSE_CLKS = 2;      // itr pulse width (clocks)
 
 reg clk = 0, rst = 1;
 initial #10 rst = 0;
@@ -18,19 +26,21 @@ always #5 clk = ~clk;
 
 reg  signed [31:0] in_bus = 0;
 wire signed [31:0] io_out;
-wire [1:0] req_in;               // one-hot: 1 = port 0 (sample), 2 = port 1 (flag)
+wire req_in;                     // NUIOIN=1: single input port (port 0 = sample)
 wire [3:0] out_en;
+reg  itr = 0;                    // hardware new-sample strobe -> jump to #PRACA
 wire cheguei;
 
-PMU_padrao proc(clk, rst, in_bus, io_out, req_in, out_en, cheguei);
+PMU_padrao proc(clk, rst, in_bus, io_out, req_in, out_en, itr, cheguei);
 
 // ---------------- ADC front-end wrapper (what the FPGA will contain) --------
 integer fi, sr;
 reg  signed [31:0] sample_reg = 0;
-reg  flag = 0;
-reg  seen_poll = 0;              // strobing starts after the first flag poll
+reg  started = 0;                // set once the startup hold-off elapses
+integer warmup_cnt = 0;
 integer strobe_cnt = 0;
-integer nstrobed = 0;
+integer itr_cnt    = 0;
+integer nstrobed   = 0;
 
 initial begin
     fi = $fopen("input_0.txt", "r");
@@ -38,24 +48,38 @@ initial begin
 end
 
 always @ (posedge clk) begin
-    if (req_in == 2'd2) seen_poll <= 1;              // processor is polling
-    if (seen_poll && nstrobed < NSAMP_X) begin
-        strobe_cnt <= strobe_cnt + 1;
-        if (strobe_cnt == STROBE_CLKS - 1) begin     // ADC strobe
-            strobe_cnt <= 0;
+    if (rst) begin
+        itr <= 0; started <= 0; warmup_cnt <= 0; strobe_cnt <= 0;
+        itr_cnt <= 0; nstrobed <= 0;
+    end
+    else if (!started) begin
+        // hold itr low while the one-time LUT/FIR build runs
+        warmup_cnt <= warmup_cnt + 1;
+        if (warmup_cnt >= STARTUP_CLKS - 1) started <= 1;
+    end
+    else if (nstrobed < NSAMP_X) begin
+        // start of a strobe period: latch next sample and raise itr
+        if (strobe_cnt == 0) begin
             sr = $fscanf(fi, "%d", sample_reg);
-            flag <= 1;
+            itr      <= 1;
+            itr_cnt  <= 0;
             nstrobed <= nstrobed + 1;
         end
+        // drop itr after ITR_PULSE_CLKS so the per-sample code can run
+        if (itr) begin
+            itr_cnt <= itr_cnt + 1;
+            if (itr_cnt >= ITR_PULSE_CLKS - 1) itr <= 0;
+        end
+        // advance / wrap the period counter
+        if (strobe_cnt == STROBE_CLKS - 1) strobe_cnt <= 0;
+        else                               strobe_cnt <= strobe_cnt + 1;
     end
-    if (req_in == 2'd1) flag <= 0;                   // port-0 read clears it
 end
 
-// bus decode: like the yanc tb, the value is presented while req_in is high
+// bus decode: present the latched sample while the processor reads port 0
 always @ (*) begin
     in_bus = 0;
-    if (req_in == 2'd1) in_bus = sample_reg;
-    if (req_in == 2'd2) in_bus = {31'b0, flag};
+    if (req_in == 1'b1) in_bus = sample_reg;   // port 0 (fin(0))
 end
 
 // ---------------- output capture --------------------------------------------

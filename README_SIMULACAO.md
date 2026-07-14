@@ -45,26 +45,37 @@ Por isso todos os valores nas portas usam ponto fixo Q20 (×2²⁰ = 1048576):
 O `.cmm` desfaz a escala na entrada (`x = fin(0) * 2^-20`) e aplica na saída.
 O `#TOAQUI` pulsa o pino `cheguei` uma vez por amostra processada.
 
-## Handshake de amostra nova (porta de entrada 1)
+## Reset por amostra (pino `itr` + marcador `#PRACA`)
 
 O `in()`/`fin()` do SAPHO **não espera** — lê o que estiver no barramento no
-ciclo da instrução. A sincronização com o ADC é feita por uma flag externa:
+ciclo da instrução. A sincronização com o ADC é feita por um **reset quente por
+amostra**, disparado por hardware:
 
+- **`.cmm` (modelo orientado a evento)**: o `main()` constrói as LUTs/FIR **uma
+  vez**, executa `return` e fica idle. O marcador `#PRACA` marca o ponto de
+  reentrada por amostra. Cada pulso do pino `itr` faz o PC saltar para o
+  `#PRACA`, ler **uma** amostra em `fin(0)`, emitir os 4 resultados e voltar ao
+  idle. Como `#PRACA` é um restart *quente* (não zera a memória de dados nem
+  reexecuta o startup), a linha de atraso do FIR de 164 taps e o estado (`wr`,
+  `nsmp`, `yprev`, `feprev`) **sobrevivem** entre amostras — o que um `rst`
+  global destruiria. O `#TOAQUI` continua pulsando o pino `cheguei` ("result
+  ready") uma vez por amostra.
 - **Wrapper (FPGA / testbench)**: a cada strobe do ADC, registra a amostra
-  (ligada à porta 0) e seta um flip-flop de "amostra nova" (ligado à porta 1).
-  Quando o processador lê a porta 0 (`req_in == 2'b01`), o wrapper limpa a flag.
-- **`.cmm`**: antes do `fin(0)`, o laço faz busy-wait: `while (in(1) == 0) {}`.
-  O processador fica varrendo a porta 1 até a flag subir — é isso que o "prende"
-  entre amostras, por mais rápido que seja o clock.
+  (ligada à porta 0) e **pulsa o `itr`**. Na FPGA o `itr` é um pino de hardware
+  real, dirigido pelo front-end do ADC — por isso é, de fato, um reset de
+  hardware disparado externamente, só que do tipo que preserva o estado.
 
 No cocotb o strobe é emulado com período `PMU_STROBE_CLKS` (default 6000 clocks;
 o caso real 100 MHz / 1920 Hz seria 52083 — resultados idênticos, simulação ~9×
-mais lenta). O testbench conta **overruns** (strobe com flag ainda em 1 =
-amostra perdida) e falha se houver algum.
+mais lenta). O `itr` fica baixo durante um **hold-off de startup**
+(`PMU_STARTUP_CLKS`, default 40000) para não abortar o build único das LUTs/FIR.
+O testbench conta **overruns** (novo strobe antes de a amostra anterior
+terminar) e falha se houver algum. O cross-check em Verilog puro
+(`PMU_padrao/Simulation/xcheck_tb.v`) faz o mesmo, dirigindo `itr` diretamente.
 
 Custo de processamento medido: ~4,6 mil ciclos por amostra → clock mínimo para
 tempo real a 1920 Hz ≈ **8,8 MHz**. A 100 MHz o processador fica ~91 % do
-período em idle no busy-wait.
+período em idle aguardando o próximo `itr`.
 
 ## Arquivos de saída (`PMU_padrao/Simulation/`)
 
@@ -97,6 +108,8 @@ Resultado da validação (1600 amostras, Icarus): TVE máx 0,9802 % (modelo:
 
 ## Gráficos
 
-`python plot_results.py` (Python do sistema, precisa de matplotlib/numpy) lê o
-`pmu_results.txt` e gera `PMU_padrao/Simulation/pmu_plots.png` com os 6 painéis
-do `main.m`: sinal de entrada, |X|, fase, frequência, ROCOF e TVE.
+`python plot_results.py` (Python do sistema, precisa de plotly/numpy) lê o
+`pmu_results.txt` e gera `PMU_padrao/Simulation/pmu_plots.html` — gráfico
+**interativo** com os 6 painéis do `main.m` (sinal de entrada, |X|, fase,
+frequência, ROCOF e TVE), abrindo no navegador. Use `--no-show` para só gerar o
+arquivo.
