@@ -1,14 +1,15 @@
 # =============================================================================
-#  plot_results.py - graficos dos resultados da PMU SAPHO (fast sim cocotb)
+#  plot_results.py - graficos INTERATIVOS dos resultados da PMU SAPHO (Plotly)
 #
 #  Le PMU_padrao/Simulation/pmu_results.txt (gerado pelo pmu_cocotb.py) e
 #  reproduz os 6 paineis do Matilab/main.m: sinal de entrada, amplitude,
 #  fase, frequencia, ROCOF e TVE - referencia analitica vs estimado no
 #  processador.
 #
-#  Uso:  python plot_results.py [caminho\pmu_results.txt] [--show]
+#  Uso:  python plot_results.py [caminho\pmu_results.txt] [--no-show]
 #        (sem argumentos usa PMU_padrao/Simulation/pmu_results.txt)
-#  Saida: pmu_plots.png ao lado do arquivo de entrada.
+#  Saida: pmu_plots.html (interativo) ao lado do arquivo de entrada; abre no
+#         navegador automaticamente (use --no-show para so gerar o arquivo).
 # =============================================================================
 
 import math
@@ -17,9 +18,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # paleta validada (dataviz): estimado = azul, referencia = vermelho tracejado
 C_EST   = "#2a78d6"
@@ -27,6 +27,7 @@ C_REF   = "#e34948"
 C_TEXT  = "#0b0b0b"
 C_MUTED = "#52514e"
 C_GRID  = "#d9d8d4"
+C_BG    = "#fcfcfb"
 
 GDELAY = 82            # atraso de grupo do FIR (164/2), como no PMU_padrao.m
 STEADY0 = 400          # inicio da janela de regime usada no relatorio
@@ -53,7 +54,7 @@ def parse_results(path):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    show = "--show" in sys.argv
+    show = "--no-show" not in sys.argv
     path = Path(args[0]) if args else (
         Path(__file__).resolve().parent / "PMU_padrao" / "Simulation" / "pmu_results.txt")
 
@@ -85,93 +86,89 @@ def main():
              f"|FE| max {np.max(np.abs(fe_st - f1)) * 1e3:.2f} mHz")
     print(stats)
 
-    fig, axs = plt.subplots(6, 1, figsize=(10, 14), sharex=True)
-    fig.patch.set_facecolor("#fcfcfb")
+    titles = (
+        "Sinal de entrada x[n]  (A=%g, f1=%g Hz, Fs=%g Hz)" % (A, f1, fs),
+        "Amplitude |X|",
+        "Fase de X (alinhada ao atraso de grupo, X[n-%d])" % GDELAY,
+        "Frequência estimada",
+        "ROCOF",
+        "TVE",
+    )
+    fig = make_subplots(rows=6, cols=1, shared_xaxes=True,
+                        vertical_spacing=0.035, subplot_titles=titles)
 
-    def style(ax):
-        ax.set_facecolor("#fcfcfb")
-        ax.grid(True, color=C_GRID, linewidth=0.6, alpha=0.6)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-        for side in ("left", "bottom"):
-            ax.spines[side].set_color(C_MUTED)
-        ax.tick_params(colors=C_MUTED, labelsize=9)
-        ax.axvspan(STEADY0, n[-1], color="#000000", alpha=0.04, zorder=0)
+    ref_kw = dict(mode="lines", line=dict(color=C_REF, width=2, dash="dash"))
+    est_kw = dict(mode="lines", line=dict(color=C_EST, width=2))
+
+    def add(row, y, name, **kw):
+        fig.add_trace(go.Scatter(x=n, y=y, name=name, legendgroup=name,
+                                 showlegend=(row == 2), **kw), row=row, col=1)
 
     # 1 - sinal de entrada
-    ax = axs[0]
-    ax.plot(n, x, color=C_EST, linewidth=0.9)
-    ax.set_title("Sinal de entrada x[n]  (A=%g, f1=%g Hz, Fs=%g Hz)"
-                 % (A, f1, fs), color=C_TEXT, fontsize=11, loc="left")
-    ax.set_ylabel("x[n]", color=C_MUTED)
+    fig.add_trace(go.Scatter(x=n, y=x, name="x[n]", showlegend=False,
+                             mode="lines", line=dict(color=C_EST, width=1)),
+                  row=1, col=1)
 
     # 2 - amplitude do fasor
-    ax = axs[1]
-    ax.plot(n, mag_ref, color=C_REF, linewidth=1.6, linestyle="--",
-            label="Real (A/√2)")
-    ax.plot(n, mag_hw, color=C_EST, linewidth=1.6, label="Estimado (SAPHO)")
-    ax.set_title("Amplitude |X|", color=C_TEXT, fontsize=11, loc="left")
-    ax.set_ylabel("|X|", color=C_MUTED)
-    ax.set_ylim(0, 1.1 * A / math.sqrt(2) + 0.1)
-    ax.legend(loc="lower right", fontsize=9, frameon=False)
+    add(2, mag_ref, "Real (referência)", **ref_kw)
+    add(2, mag_hw,  "Estimado (SAPHO)",  **est_kw)
 
     # 3 - fase do fasor
-    ax = axs[2]
-    ax.plot(n, fase_ref, color=C_REF, linewidth=1.6, linestyle="--",
-            label="Real")
-    ax.plot(n, fase_hw, color=C_EST, linewidth=1.2, label="Estimado (SAPHO)")
-    ax.set_title("Fase de X (alinhada ao atraso de grupo, X[n-%d])" % GDELAY,
-                 color=C_TEXT, fontsize=11, loc="left")
-    ax.set_ylabel("graus", color=C_MUTED)
-    ax.legend(loc="lower right", fontsize=9, frameon=False)
+    add(3, fase_ref, "Real (referência)", **ref_kw)
+    add(3, fase_hw,  "Estimado (SAPHO)",  **est_kw)
 
     # 4 - frequencia
-    ax = axs[3]
-    ax.plot(n, np.full_like(n, f1), color=C_REF, linewidth=1.6,
-            linestyle="--", label="Real (%g Hz)" % f1)
-    ax.plot(n, fe_hw, color=C_EST, linewidth=1.6, label="Estimado (SAPHO)")
-    ax.set_title("Frequência estimada", color=C_TEXT, fontsize=11,
-                 loc="left")
-    ax.set_ylabel("Hz", color=C_MUTED)
-    ax.set_ylim(f1 - 3, f1 + 3)   # o transitorio inicial sai da escala
-    ax.legend(loc="lower right", fontsize=9, frameon=False)
+    add(4, np.full_like(n, f1), "Real (referência)", **ref_kw)
+    add(4, fe_hw,               "Estimado (SAPHO)",  **est_kw)
 
     # 5 - ROCOF
-    ax = axs[4]
-    ax.plot(n, np.zeros_like(n), color=C_REF, linewidth=1.6, linestyle="--",
-            label="Real (0)")
-    ax.plot(n, rocof_hw, color=C_EST, linewidth=1.2, label="Estimado (SAPHO)")
-    ax.set_title("ROCOF", color=C_TEXT, fontsize=11, loc="left")
-    ax.set_ylabel("Hz/amostra", color=C_MUTED)
-    ax.set_ylim(-0.5, 0.5)
-    ax.legend(loc="lower right", fontsize=9, frameon=False)
+    add(5, np.zeros_like(n), "Real (referência)", **ref_kw)
+    add(5, rocof_hw,         "Estimado (SAPHO)",  **est_kw)
 
-    # 6 - TVE
-    ax = axs[5]
-    ax.plot(n, np.ones_like(n), color=C_REF, linewidth=1.6, linestyle="--",
-            label="Limite 1 %")
-    ax.plot(n, tve, color=C_EST, linewidth=1.6, label="TVE (SAPHO)")
-    ax.set_title("TVE", color=C_TEXT, fontsize=11, loc="left")
-    ax.set_ylabel("%", color=C_MUTED)
-    ax.set_xlabel("amostra n", color=C_MUTED)
-    ax.set_ylim(0, 5)
-    ax.legend(loc="upper right", fontsize=9, frameon=False)
-    ax.annotate(stats, xy=(0.01, 0.86), xycoords="axes fraction",
-                fontsize=8.5, color=C_MUTED)
+    # 6 - TVE (referencia = limite de 1 %)
+    add(6, np.ones_like(n), "Real (referência)", **ref_kw)
+    add(6, tve,             "Estimado (SAPHO)",  **est_kw)
 
-    for ax in axs:
-        style(ax)
+    # eixos y: rotulos e limites equivalentes ao matplotlib
+    fig.update_yaxes(title_text="x[n]", row=1, col=1)
+    fig.update_yaxes(title_text="|X|", range=[0, 1.1 * A / math.sqrt(2) + 0.1],
+                     row=2, col=1)
+    fig.update_yaxes(title_text="graus", row=3, col=1)
+    fig.update_yaxes(title_text="Hz", range=[f1 - 3, f1 + 3], row=4, col=1)
+    fig.update_yaxes(title_text="Hz/amostra", range=[-0.5, 0.5], row=5, col=1)
+    fig.update_yaxes(title_text="%", range=[0, 5], row=6, col=1)
+    fig.update_xaxes(title_text="amostra n", row=6, col=1)
 
-    fig.suptitle("PMU padrão em SAPHO × referência analítica "
-                 "— teste Signal Frequency (faixa cinza = janela de regime)",
-                 color=C_TEXT, fontsize=12, x=0.5, y=0.995)
-    fig.tight_layout(rect=(0, 0, 1, 0.985))
+    # faixa cinza = janela de regime (n >= STEADY0), em todos os paineis
+    for r in range(1, 7):
+        fig.add_vrect(x0=STEADY0, x1=float(n[-1]), fillcolor="#000000",
+                      opacity=0.04, line_width=0, layer="below", row=r, col=1)
 
-    out = path.parent / "pmu_plots.png"
-    fig.savefig(out, dpi=150, facecolor=fig.get_facecolor())
-    print(f"grafico salvo em {out}")
+    # nota de estatisticas no painel do TVE
+    fig.add_annotation(text=stats, xref="x domain", yref="y domain",
+                       x=0.01, y=0.94, showarrow=False, align="left",
+                       font=dict(size=11, color=C_MUTED), row=6, col=1)
+
+    fig.update_layout(
+        title=dict(text="PMU padrão em SAPHO × referência analítica "
+                        "— teste Signal Frequency (faixa cinza = janela de regime)",
+                   x=0.5, font=dict(size=15, color=C_TEXT)),
+        height=1400, width=1000,
+        paper_bgcolor=C_BG, plot_bgcolor=C_BG,
+        font=dict(color=C_MUTED),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1),
+        hovermode="x unified",
+        margin=dict(t=90, r=40, l=70, b=50),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor=C_GRID, zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor=C_GRID, zeroline=False)
+
+    out = path.parent / "pmu_plots.html"
+    fig.write_html(out, include_plotlyjs="cdn")
+    print(f"grafico interativo salvo em {out}")
     if show:
-        plt.show()
+        fig.show()
 
 
 if __name__ == "__main__":
