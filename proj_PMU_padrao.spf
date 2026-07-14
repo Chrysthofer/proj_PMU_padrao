@@ -2,14 +2,14 @@
   "metadata": {
     "projectName": "proj_PMU_padrao",
     "createdAt": "2026-07-08T20:15:02.967Z",
-    "lastModified": "2026-07-08T22:28:22.724Z",
+    "lastModified": "2026-07-14T16:18:54.909Z",
     "computerName": "XPS8930DUQ",
     "appVersion": "6.3.2",
-    "projectPath": "C:\\Users\\LCOM\\Desktop\\proj_PMU_padrao",
-    "lastOpened": "2026-07-09T19:31:49.749Z"
+    "projectPath": "C:\\Users\\LCOM\\Documents\\Github\\proj_PMU_padrao",
+    "lastOpened": "2026-07-14T17:29:11.172Z"
   },
   "structure": {
-    "basePath": "C:\\Users\\LCOM\\Desktop\\proj_PMU_padrao",
+    "basePath": "C:\\Users\\LCOM\\Documents\\Github\\proj_PMU_padrao",
     "folders": [],
     "processors": [
       {
@@ -28,14 +28,19 @@
     ],
     "testbenchFiles": [
       {
+        "name": "pmu_cocotb.py",
+        "path": "pmu_cocotb.py",
+        "isTopLevel": true
+      },
+      {
         "name": "PMU_padrao_tb.v",
         "path": "PMU_padrao\\Simulation\\PMU_padrao_tb.v",
         "isTopLevel": false
       },
       {
-        "name": "pmu_cocotb.py",
-        "path": "pmu_cocotb.py",
-        "isTopLevel": true
+        "name": "xcheck_tb.v",
+        "path": "PMU_padrao\\Simulation\\xcheck_tb.v",
+        "isTopLevel": false
       }
     ]
   }

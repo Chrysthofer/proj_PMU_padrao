@@ -77,8 +77,8 @@ processor#(.NUBITS(32),
 .F_ABS_M(1),
 .F_SGN(1),
 .I2F(1),
-.DFILE("C:/Users/LCOM/Desktop/proj_PMU_padrao/PMU_padrao/Hardware/PMU_padrao_data.mif"),
-.IFILE("C:/Users/LCOM/Desktop/proj_PMU_padrao/PMU_padrao/Hardware/PMU_padrao_inst.mif"))
+.DFILE("C:/Users/LCOM/Documents/Github/proj_PMU_padrao/PMU_padrao/Hardware/PMU_padrao_data.mif"),
+.IFILE("C:/Users/LCOM/Documents/Github/proj_PMU_padrao/PMU_padrao/Hardware/PMU_padrao_inst.mif"))
 
 `ifdef YANC_SIM_VIS
 p_PMU_padrao (clk, rst, in, out, addr_in, addr_out, proc_req_in, proc_out_en, itr, cheguei, mem_wr, mem_addr_wr,pc_sim_val);
