@@ -168,9 +168,9 @@ def tve_pct(est, ref):
 
 
 def generate_plots(log):
-    """Render pmu_plots.png by running plot_results.py in an external Python.
+    """Render pmu_plots.html by running plot_results.py in an external Python.
 
-    Aurora's bundled MSYS interpreter has no matplotlib, so the plots are
+    Aurora's bundled MSYS interpreter has no plotly, so the plots are
     delegated to a system Python that does.  Search order: PMU_PLOT_PYTHON
     env var, common Windows install paths, the 'py' launcher.  Skipping is
     non-fatal: the TXT outputs are already written.
@@ -195,14 +195,24 @@ def generate_plots(log):
     if py:
         launchers.append([py, "-3"])
 
+    # The simulator runs an EMBEDDED (MSYS) Python that exports PYTHONHOME/
+    # PYTHONPATH pointing at its own stdlib+site-packages; a child that
+    # inherits them imports from the MSYS tree (no plotly), so the probe
+    # would fail even for a valid system Python.  Strip every PYTHON* var
+    # that redirects module resolution before spawning the interpreter.
+    child_env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("PYTHONHOME", "PYTHONPATH",
+                                      "PYTHONSTARTUP", "PYTHONEXECUTABLE",
+                                      "PYTHONNOUSERSITE")}
+
     for cmd in launchers:
         try:
-            probe = subprocess.run(cmd + ["-c", "import matplotlib"],
-                                   capture_output=True, timeout=60)
+            probe = subprocess.run(cmd + ["-c", "import plotly, numpy"],
+                                   capture_output=True, timeout=60, env=child_env)
             if probe.returncode != 0:
                 continue
             run = subprocess.run(cmd + [str(script)], capture_output=True,
-                                 text=True, timeout=300,
+                                 text=True, timeout=300, env=child_env,
                                  cwd=str(script.parent))
             if run.returncode == 0:
                 log.info("PMU: plots -> %s" % run.stdout.strip()
@@ -212,7 +222,7 @@ def generate_plots(log):
             return
         except (OSError, subprocess.TimeoutExpired):
             continue
-    log.warning("PMU: no Python with matplotlib found, skipping plots "
+    log.warning("PMU: no Python with plotly found, skipping plots "
                 "(set PMU_PLOT_PYTHON or run plot_results.py manually)")
 
 

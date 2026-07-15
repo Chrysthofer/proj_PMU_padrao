@@ -50,7 +50,7 @@ processador e do gatilho: [docs/diagrama_ciclo_processador.html](docs/diagrama_c
 
 - AURORA com a toolchain yanc embarcada (compiladores C±/ASM, Icarus Verilog,
   Python 3.12 com cocotb 2.0.1). Abra `proj_PMU_padrao.spf` e use Fast Sim.
-- Para os gráficos: um Python do sistema com `matplotlib` e `numpy`
+- Para os gráficos: um Python do sistema com `plotly` e `numpy`
   (detectado automaticamente; configurável via variável `PMU_PLOT_PYTHON`).
 - Alternativa sem AURORA: compile com os binários do yanc e rode o runner
   cocotb manualmente, ou use o `xcheck_tb.v` com iverilog/vvp puro.
@@ -72,7 +72,7 @@ PMU_padrao/Software/      PMU_padrao.cmm (C±) e .asm gerado
 PMU_padrao/Hardware/      Verilog e imagens de memória gerados pelo yanc
 PMU_padrao/Simulation/    resultados TXT, gráficos, xcheck_tb.v, baseline
 pmu_cocotb.py             testbench cocotb (estímulo, ADC emulado, análise)
-plot_results.py           gráficos matplotlib a partir de pmu_results.txt
+plot_results.py           gráficos Plotly a partir de pmu_results.txt
 docs/                     diagrama didático do ciclo do processador
 proj_PMU_padrao.spf       projeto AURORA
 ```
