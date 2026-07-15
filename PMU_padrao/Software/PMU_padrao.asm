@@ -5,7 +5,7 @@ NOP
 #NBEXPO 8
 #NDSTAC 64
 #SDEPTH 32
-#NUIOIN 2
+#NUIOIN 1
 #NUIOOU 4
 #NUGAIN 128
 #array w0 2 164
@@ -123,17 +123,9 @@ LOD 0.0
 P_LOD 0.0
 SET_P yprev_i
 SET yprev
-@Lwh5 LOD 1
-JIZ Lwh5end
-INN 1
-SET main_flagv
-@Lwh6 LOD 0
-EQU main_flagv
-JIZ Lwh6end
-INN 1
-SET main_flagv
-JMP Lwh6
-@Lwh6end F_INN 0
+@fim JMP fim
+#ITRAD
+F_INN 0
 F_MLT 0.00000095367431640625
 SET main_x
 LOD 31
@@ -160,9 +152,9 @@ LOD wr
 SET main_idx
 LOD 0
 SET main_k
-@Lwh7 LOD 164
+@Lwh5 LOD 164
 LES main_k
-JIZ Lwh7end
+JIZ Lwh5end
 LOD main_k
 LDI w0
 P_LOD main_idx
@@ -188,8 +180,8 @@ SET main_idx
 @Lif2else LOD main_k
 ADD 1
 SET main_k
-JMP Lwh7
-@Lwh7end LOD wr
+JMP Lwh5
+@Lwh5end LOD wr
 ADD 1
 SET wr
 LOD 163
@@ -292,8 +284,7 @@ SET feprev
 LOD nsmp
 ADD 1
 SET nsmp
-JMP Lwh5
-@Lwh5end @fim JMP fim
+@fim JMP fim
 
 // Arctangent function --------------------------------------------------------
 // |x| is folded into [0,1] with the 1/x identity: atan(|x|) = pi/2 - atan(1/|x|)

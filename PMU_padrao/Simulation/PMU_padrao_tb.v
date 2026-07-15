@@ -21,13 +21,13 @@ always #5.000000 clk = ~clk;
 
 reg  signed [31:0] proc_io_in = 0;
 wire signed [31:0] proc_io_out;
-wire [1:0] proc_req_in;
+wire [0:0] proc_req_in;
 wire [3:0] proc_out_en;
 
 wire proc_cheguei;
 
 /* verilator tracing_on */
-PMU_padrao proc(clk,rst,proc_io_in,proc_io_out,proc_req_in,proc_out_en,proc_cheguei);
+PMU_padrao proc(clk,rst,proc_io_in,proc_io_out,proc_req_in,proc_out_en,1'b0,proc_cheguei);
 
 /* verilator tracing_off */
 
@@ -38,15 +38,9 @@ integer data_in_0;
 reg signed [31:0] in_0 = 0;
 reg req_in_0 = 0;
 
-// port 1 variables
-integer data_in_1;
-reg signed [31:0] in_1 = 0;
-reg req_in_1 = 0;
-
 // open a file for reading on each port
 initial begin
     data_in_0 = $fopen("C:/Users/LCOM/Documents/Github/proj_PMU_padrao/PMU_padrao/Simulation/input_0.txt", "r"); // place your input data in this file
-    data_in_1 = $fopen("C:/Users/LCOM/Documents/Github/proj_PMU_padrao/PMU_padrao/Simulation/input_1.txt", "r"); // place your input data in this file
 end
 
 // decode input ports
@@ -55,9 +49,6 @@ always @ (*) begin
     // port 0 decoding
     if (proc_req_in == 1) proc_io_in = in_0;
     req_in_0 = proc_req_in == 1;
-    // port 1 decoding
-    if (proc_req_in == 2) proc_io_in = in_1;
-    req_in_1 = proc_req_in == 2;
 end
 
 // implement reading of the input data
@@ -65,8 +56,6 @@ integer scan_result;
 always @ (negedge clk) begin  
     // reading port 0
     if (data_in_0 != 0 && proc_req_in == 1) scan_result = $fscanf(data_in_0, "%d", in_0);
-    // reading port 1
-    if (data_in_1 != 0 && proc_req_in == 2) scan_result = $fscanf(data_in_1, "%d", in_1);
 end
 
 // output ports ---------------------------------------------------------------
@@ -131,7 +120,7 @@ end
 
 integer chrys;
 
-always @ (posedge clk) if (proc.valr10 == 282) begin
+always @ (posedge clk) if (proc.valr10 == 272) begin
     $display("Info: end of program!");
     $finish;
 end
@@ -144,8 +133,6 @@ initial begin
     $dumpvars(0,PMU_padrao_tb.rst);
     $dumpvars(0,PMU_padrao_tb.proc.req_in_sim_0);
     $dumpvars(0,PMU_padrao_tb.proc.in_sim_0);
-    $dumpvars(0,PMU_padrao_tb.proc.req_in_sim_1);
-    $dumpvars(0,PMU_padrao_tb.proc.in_sim_1);
     $dumpvars(0,PMU_padrao_tb.proc.out_en_sim_0);
     $dumpvars(0,PMU_padrao_tb.proc.out_sig_0);
     $dumpvars(0,PMU_padrao_tb.proc.out_en_sim_1);
@@ -167,7 +154,6 @@ initial begin
     $dumpvars(0,PMU_padrao_tb.proc.me1_f_global_v_nsmp_e_);
     $dumpvars(0,PMU_padrao_tb.proc.me2_f_global_v_feprev_e_);
     $dumpvars(0,PMU_padrao_tb.proc.comp_me3_f_global_v_yprev_e_);
-    $dumpvars(0,PMU_padrao_tb.proc.me1_f_main_v_flagv_e_);
     $dumpvars(0,PMU_padrao_tb.proc.me2_f_main_v_x_e_);
     $dumpvars(0,PMU_padrao_tb.proc.me1_f_main_v_ph_e_);
     $dumpvars(0,PMU_padrao_tb.proc.me2_f_main_v_yr_e_);

@@ -5,7 +5,7 @@ Parameters    : A=1  f1=62 Hz  f0=60 Hz  Fs=1920 Hz  Fr=60
 Fixed phase   : 0.7853981634 rad (MATLAB main.m uses random)
 Samples       : 1600 fed / 1600 captured, steady window [400,1600)
 Port scaling  : Q20 (2^20 = 1048576)
-ADC handshake : strobe every 6000 clks, flag on port 1, 0 overruns
+ADC handshake : itr strobe every 6000 clks (#PRACA per-sample restart), 0 overruns
 
 Steady-state metrics (hardware vs analytic truth X):
   TVE   max   : 0.980200 %   (limit 1.20 %)  -> PASS
